@@ -10,6 +10,7 @@ from functools import wraps
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import database
 
 # Настройка логирования
 logging.basicConfig(
@@ -20,12 +21,16 @@ logger = logging.getLogger(__name__)
 
 # ==================== КОНФИГУРАЦИЯ ====================
 CLIENT_BOT_TOKEN = "8739515859:AAEA1dNXUvBfWE4QXl24WdI-fxQn-EdfMGQ"
-ADMIN_BOT_TOKEN = "8638017870:AAHImosiS0sK6M0H7JeI3SAeZ8K2C0I_ooo"  # Токен админ-бота
-ADMIN_USER_ID = 1245450175  # Ваш ID
+ADMIN_BOT_TOKEN = "8638017870:AAHImosiS0sK6M0H7JeI3SAeZ8K2C0I_ooo"
+ADMIN_USER_ID = 1245450175
 # ====================================================
 
 # Создаем админ-бота для отправки заявок
 admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
+
+# Инициализация базы данных
+database.init_database()
+
 
 def create_retry_session():
     """Создание сессии с повторными попытками"""
@@ -40,6 +45,7 @@ def create_retry_session():
     session.mount("https://", adapter)
     return session
 
+
 # Создаем клиентского бота
 bot = telebot.TeleBot(
     CLIENT_BOT_TOKEN,
@@ -51,6 +57,7 @@ bot.session = create_retry_session()
 # Хранилище данных пользователей
 user_data = {}
 
+
 class UserState:
     WAITING_FIO = 1
     WAITING_PASSPORT_SERIES = 2
@@ -59,8 +66,10 @@ class UserState:
     WAITING_PASSPORT_DATE = 5
     WAITING_CONFIRMATION = 6
 
+
 def retry_on_failure(max_retries=3, delay=2):
     """Декоратор для повторных попыток при ошибках"""
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -73,8 +82,11 @@ def retry_on_failure(max_retries=3, delay=2):
                     logger.warning(f"Ошибка при выполнении {func.__name__}, попытка {attempt + 1}: {e}")
                     time.sleep(delay * (attempt + 1))
             return None
+
         return wrapper
+
     return decorator
+
 
 @retry_on_failure(max_retries=3)
 def safe_send_message(chat_id, text, **kwargs):
@@ -87,6 +99,7 @@ def safe_send_message(chat_id, text, **kwargs):
     except Exception as e:
         logger.error(f"Ошибка при отправке сообщения: {e}")
         raise
+
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -112,6 +125,46 @@ _Например: Иванов Иван Иванович_
         welcome_text,
         parse_mode='Markdown'
     )
+
+
+@bot.message_handler(commands=['status'])
+def check_status(message):
+    """Проверка статуса заявок"""
+    user_id = message.from_user.id
+    apps = database.get_user_applications(user_id, limit=5)
+
+    if not apps:
+        safe_send_message(
+            message.chat.id,
+            "📭 *У вас нет активных заявок.*\n\nИспользуйте /start для создания новой.",
+            parse_mode='Markdown'
+        )
+        return
+
+    status_emoji = {
+        'pending': '⏳',
+        'processing': '🔄',
+        'completed': '✅',
+        'rejected': '❌'
+    }
+
+    status_text = {
+        'pending': 'Ожидает обработки',
+        'processing': 'В обработке',
+        'completed': 'Выполнена',
+        'rejected': 'Отклонена'
+    }
+
+    response = "*📋 ВАШИ ПОСЛЕДНИЕ ЗАЯВКИ:*\n\n"
+    for app in apps:
+        emoji = status_emoji.get(app['status'], '📄')
+        response += f"{emoji} *Заявка #{app['id']}*\n"
+        response += f"📅 Дата: {app['created_at'][:10]}\n"
+        response += f"📊 Статус: {status_text.get(app['status'], app['status'])}\n"
+        response += f"👤 ФИО: {app['fio']}\n\n"
+
+    safe_send_message(message.chat.id, response, parse_mode='Markdown')
+
 
 @bot.message_handler(func=lambda message: user_data.get(message.from_user.id, {}).get('state') == UserState.WAITING_FIO)
 def get_fio(message):
@@ -149,6 +202,7 @@ def get_fio(message):
         parse_mode='Markdown'
     )
 
+
 @bot.message_handler(
     func=lambda message: user_data.get(message.from_user.id, {}).get('state') == UserState.WAITING_PASSPORT_SERIES)
 def get_passport_series(message):
@@ -174,6 +228,7 @@ def get_passport_series(message):
         "_Например: 345678_",
         parse_mode='Markdown'
     )
+
 
 @bot.message_handler(
     func=lambda message: user_data.get(message.from_user.id, {}).get('state') == UserState.WAITING_PASSPORT_NUMBER)
@@ -201,6 +256,7 @@ def get_passport_number(message):
         parse_mode='Markdown'
     )
 
+
 @bot.message_handler(
     func=lambda message: user_data.get(message.from_user.id, {}).get('state') == UserState.WAITING_PASSPART_ISSUED)
 def get_passport_issued(message):
@@ -226,6 +282,7 @@ def get_passport_issued(message):
         "_Например: 15.03.2010_",
         parse_mode='Markdown'
     )
+
 
 @bot.message_handler(
     func=lambda message: user_data.get(message.from_user.id, {}).get('state') == UserState.WAITING_PASSPORT_DATE)
@@ -259,6 +316,7 @@ def get_passport_date(message):
     user_data[user_id]['state'] = UserState.WAITING_CONFIRMATION
 
     show_confirmation(message.chat.id, user_id)
+
 
 def show_confirmation(chat_id, user_id):
     data = user_data[user_id]
@@ -295,6 +353,7 @@ def show_confirmation(chat_id, user_id):
         reply_markup=markup
     )
 
+
 @bot.callback_query_handler(func=lambda call: True)
 def handle_confirmation(call):
     user_id = call.from_user.id
@@ -305,31 +364,44 @@ def handle_confirmation(call):
         return
 
     if call.data == "confirm_yes":
-        # Сохраняем заявку
+        # Формируем заявку
         application = {
             'user_id': user_id,
             'username': call.from_user.username or 'не указан',
-            'full_name': call.from_user.first_name,
-            'last_name': call.from_user.last_name or '',
+            'full_name': f"{call.from_user.first_name} {call.from_user.last_name or ''}".strip(),
             'fio': user_data[user_id]['fio'],
             'passport': user_data[user_id]['passport'],
             'date': datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
             'timestamp': datetime.now().timestamp()
         }
 
-        # Отправляем заявку админу через админ-бота
-        send_to_admin(application)
+        try:
+            # Сохраняем в базу данных
+            app_id = database.save_application(application)
+            logger.info(f"Заявка #{app_id} сохранена в БД")
 
-        # Сохраняем локально
-        save_application_locally(application)
+            # Отправляем уведомление админу
+            send_to_admin(application, app_id)
 
-        safe_send_message(
-            chat_id,
-            "✅ *ЗАЯВКА УСПЕШНО ОТПРАВЛЕНА!*\n\n"
-            "Спасибо за обращение. Наш специалист свяжется с вами в ближайшее время.\n\n"
-            "Если у вас есть вопросы, вы можете написать нам еще раз.",
-            parse_mode='Markdown'
-        )
+            # Сохраняем локально для резерва
+            save_application_locally(application)
+
+            safe_send_message(
+                chat_id,
+                f"✅ *ЗАЯВКА #{app_id} УСПЕШНО ОТПРАВЛЕНА!*\n\n"
+                "Спасибо за обращение. Наш специалист свяжется с вами в ближайшее время.\n\n"
+                "Вы можете проверить статус заявки командой /status",
+                parse_mode='Markdown'
+            )
+
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении заявки: {e}")
+            safe_send_message(
+                chat_id,
+                "❌ *Ошибка при отправке заявки.*\n\n"
+                "Пожалуйста, попробуйте позже или обратитесь к администратору.",
+                parse_mode='Markdown'
+            )
 
         # Очищаем данные пользователя
         del user_data[user_id]
@@ -367,15 +439,16 @@ def handle_confirmation(call):
     except Exception as e:
         logger.error(f"Ошибка при ответе на callback: {e}")
 
-def send_to_admin(application):
+
+def send_to_admin(application, app_id):
     """Отправка заявки в админ-бот"""
     message_text = f"""
-🆕 *НОВАЯ ЗАЯВКА*
+🆕 *НОВАЯ ЗАЯВКА #{app_id}*
 
 *📱 ИНФОРМАЦИЯ О КЛИЕНТЕ:*
 • *ID:* `{application['user_id']}`
 • *Username:* @{application['username']}
-• *Имя:* {application['full_name']} {application['last_name']}
+• *Имя:* {application['full_name']}
 
 *👤 ЛИЧНЫЕ ДАННЫЕ:*
 • *ФИО:* {application['fio']}
@@ -391,25 +464,26 @@ def send_to_admin(application):
 
 ---
 *📌 Статус:* Ожидает обработки
+*🔗 ID в системе:* {app_id}
 """
 
     try:
-        # Отправляем сообщение админ-боту
+        # Отправляем админу
         admin_bot.send_message(
             ADMIN_USER_ID,
             message_text,
             parse_mode='Markdown',
             timeout=30
         )
-        logger.info(f"Заявка отправлена админу: {application['user_id']}")
+        logger.info(f"Уведомление о заявке #{app_id} отправлено админу")
     except Exception as e:
-        logger.error(f"Ошибка отправки админу: {e}")
+        logger.error(f"Ошибка отправки уведомления админу: {e}")
         # Сохраняем в файл для ручной отправки
-        save_failed_application(application)
-        raise
+        save_failed_application(application, app_id)
 
-def save_failed_application(application):
-    """Сохранение заявки, которую не удалось отправить"""
+
+def save_failed_application(application, app_id):
+    """Сохранение заявки, которую не удалось отправить админу"""
     filename = "failed_applications.json"
     try:
         if os.path.exists(filename):
@@ -419,6 +493,7 @@ def save_failed_application(application):
             apps = []
 
         apps.append({
+            'app_id': app_id,
             'application': application,
             'failed_time': datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         })
@@ -426,13 +501,14 @@ def save_failed_application(application):
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(apps, f, ensure_ascii=False, indent=2)
 
-        logger.warning(f"Заявка сохранена в {filename}: {application['user_id']}")
+        logger.warning(f"Заявка #{app_id} сохранена в {filename}")
     except Exception as e:
         logger.error(f"Ошибка сохранения неудачной заявки: {e}")
 
+
 def save_application_locally(application):
-    """Сохранение заявки в локальный JSON файл"""
-    filename = "applications.json"
+    """Сохранение заявки в локальный JSON файл для резерва"""
+    filename = "applications_backup.json"
     try:
         if os.path.exists(filename):
             with open(filename, 'r', encoding='utf-8') as f:
@@ -445,9 +521,10 @@ def save_application_locally(application):
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(apps, f, ensure_ascii=False, indent=2)
 
-        logger.info(f"Заявка сохранена локально: {application['user_id']}")
+        logger.info(f"Заявка сохранена в {filename}")
     except Exception as e:
         logger.error(f"Ошибка сохранения заявки: {e}")
+
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
@@ -455,6 +532,7 @@ def help_command(message):
 *📚 ДОСТУПНЫЕ КОМАНДЫ:*
 
 /start - Начать оформление заявки
+/status - Проверить статус заявки
 /help - Показать это сообщение
 /cancel - Отменить оформление заявки
 
@@ -463,14 +541,20 @@ def help_command(message):
 1. Введите свои данные по запросу бота
 2. Проверьте правильность введенной информации
 3. Подтвердите отправку заявки
+4. Отслеживайте статус командой /status
 
 *🕒 Время обработки:* до 30 минут
+
+---
+*📞 Контакты:* 
+При возникновении вопросов обращайтесь к администратору.
 """
     safe_send_message(
         message.chat.id,
         help_text,
         parse_mode='Markdown'
     )
+
 
 @bot.message_handler(commands=['cancel'])
 def cancel_command(message):
@@ -491,8 +575,9 @@ def cancel_command(message):
             parse_mode='Markdown'
         )
 
+
 if __name__ == "__main__":
-    logger.info("Бот для сбора заявок запущен...")
+    logger.info("Клиентский бот для сбора заявок запущен...")
     logger.info("Пытаемся подключиться к Telegram API...")
 
     # Проверка подключения клиентского бота
@@ -517,7 +602,7 @@ if __name__ == "__main__":
         admin_bot_info = admin_bot.get_me()
         logger.info(f"Админ-бот успешно подключен: @{admin_bot_info.username}")
     except Exception as e:
-        logger.warning(f"Не удалось подключить админ-бота: {e}")
+        logger.warning(f"Не удалось подключить админ-бота для уведомлений: {e}")
 
     # Запускаем клиентского бота
     try:
