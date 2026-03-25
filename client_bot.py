@@ -20,9 +20,12 @@ logger = logging.getLogger(__name__)
 
 # ==================== КОНФИГУРАЦИЯ ====================
 CLIENT_BOT_TOKEN = "8739515859:AAEA1dNXUvBfWE4QXl24WdI-fxQn-EdfMGQ"
-ADMIN_BOT_USERNAME = "in_folio_adm_bot"  # username бота-админа (без @)
-ADMIN_CHAT_ID = "8638017870"  # ID чата админа
+ADMIN_BOT_TOKEN = "8638017870:AAHImosiS0sK6M0H7JeI3SAeZ8K2C0I_ooo"  # Токен админ-бота
+ADMIN_USER_ID = 1245450175  # Ваш ID
 # ====================================================
+
+# Создаем админ-бота для отправки заявок
+admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
 
 def create_retry_session():
     """Создание сессии с повторными попытками"""
@@ -37,13 +40,12 @@ def create_retry_session():
     session.mount("https://", adapter)
     return session
 
-# Создаем бота с кастомными настройками
+# Создаем клиентского бота
 bot = telebot.TeleBot(
     CLIENT_BOT_TOKEN,
-    threaded=True  # Включаем многопоточность
+    threaded=True
 )
 
-# Устанавливаем кастомную сессию
 bot.session = create_retry_session()
 
 # Хранилище данных пользователей
@@ -315,7 +317,7 @@ def handle_confirmation(call):
             'timestamp': datetime.now().timestamp()
         }
 
-        # Отправляем заявку админу
+        # Отправляем заявку админу через админ-бота
         send_to_admin(application)
 
         # Сохраняем локально
@@ -365,9 +367,8 @@ def handle_confirmation(call):
     except Exception as e:
         logger.error(f"Ошибка при ответе на callback: {e}")
 
-@retry_on_failure(max_retries=5, delay=3)
 def send_to_admin(application):
-    """Отправка заявки в бот-админ"""
+    """Отправка заявки в админ-бот"""
     message_text = f"""
 🆕 *НОВАЯ ЗАЯВКА*
 
@@ -393,9 +394,9 @@ def send_to_admin(application):
 """
 
     try:
-        # Отправляем через username бота-админа
-        bot.send_message(
-            f"@{ADMIN_BOT_USERNAME}",
+        # Отправляем сообщение админ-боту
+        admin_bot.send_message(
+            ADMIN_USER_ID,
             message_text,
             parse_mode='Markdown',
             timeout=30
@@ -430,7 +431,7 @@ def save_failed_application(application):
         logger.error(f"Ошибка сохранения неудачной заявки: {e}")
 
 def save_application_locally(application):
-    """Сохранение заявки в локальный файл"""
+    """Сохранение заявки в локальный JSON файл"""
     filename = "applications.json"
     try:
         if os.path.exists(filename):
@@ -494,12 +495,12 @@ if __name__ == "__main__":
     logger.info("Бот для сбора заявок запущен...")
     logger.info("Пытаемся подключиться к Telegram API...")
 
-    # Проверка подключения
+    # Проверка подключения клиентского бота
     max_attempts = 5
     for attempt in range(max_attempts):
         try:
             bot_info = bot.get_me()
-            logger.info(f"Бот успешно запущен: @{bot_info.username}")
+            logger.info(f"Клиентский бот успешно запущен: @{bot_info.username}")
             break
         except Exception as e:
             logger.error(f"Попытка {attempt + 1}/{max_attempts} не удалась: {e}")
@@ -509,10 +510,16 @@ if __name__ == "__main__":
                 time.sleep(wait_time)
             else:
                 logger.critical("Не удалось подключиться к Telegram API после всех попыток")
-                logger.critical("Проверьте интернет-соединение и доступ к api.telegram.org")
                 exit(1)
 
-    # Запускаем бота с увеличенными таймаутами
+    # Проверка подключения админ-бота
+    try:
+        admin_bot_info = admin_bot.get_me()
+        logger.info(f"Админ-бот успешно подключен: @{admin_bot_info.username}")
+    except Exception as e:
+        logger.warning(f"Не удалось подключить админ-бота: {e}")
+
+    # Запускаем клиентского бота
     try:
         bot.infinity_polling(
             timeout=30,
