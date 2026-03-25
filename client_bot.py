@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # ==================== КОНФИГУРАЦИЯ ====================
 CLIENT_BOT_TOKEN = "8739515859:AAEA1dNXUvBfWE4QXl24WdI-fxQn-EdfMGQ"
 ADMIN_BOT_USERNAME = "in_folio_adm_bot"  # username бота-админа (без @)
-ADMIN_CHAT_ID = "1245450175"  # ID чата админа
+ADMIN_CHAT_ID = "8638017870"  # ID чата админа
 # ====================================================
 
 def create_retry_session():
