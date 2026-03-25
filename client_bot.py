@@ -7,24 +7,25 @@ from datetime import datetime
 import logging
 import time
 from functools import wraps
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
+# ==================== КОНФИГУРАЦИЯ ====================
 CLIENT_BOT_TOKEN = "8739515859:AAEA1dNXUvBfWE4QXl24WdI-fxQn-EdfMGQ"
-ADMIN_BOT_ID = "in_folio_adm_bot"  # username бота-админа
+ADMIN_BOT_USERNAME = "in_folio_adm_bot"  # username бота-админа (без @)
 ADMIN_CHAT_ID = "1245450175"  # ID чата админа
-
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-
+# ====================================================
 
 def create_retry_session():
+    """Создание сессии с повторными попытками"""
     session = requests.Session()
     retry_strategy = Retry(
         total=5,
@@ -35,7 +36,6 @@ def create_retry_session():
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session
-
 
 # Создаем бота с кастомными настройками
 bot = telebot.TeleBot(
@@ -49,7 +49,6 @@ bot.session = create_retry_session()
 # Хранилище данных пользователей
 user_data = {}
 
-
 class UserState:
     WAITING_FIO = 1
     WAITING_PASSPORT_SERIES = 2
@@ -58,10 +57,8 @@ class UserState:
     WAITING_PASSPORT_DATE = 5
     WAITING_CONFIRMATION = 6
 
-
 def retry_on_failure(max_retries=3, delay=2):
     """Декоратор для повторных попыток при ошибках"""
-
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -74,11 +71,8 @@ def retry_on_failure(max_retries=3, delay=2):
                     logger.warning(f"Ошибка при выполнении {func.__name__}, попытка {attempt + 1}: {e}")
                     time.sleep(delay * (attempt + 1))
             return None
-
         return wrapper
-
     return decorator
-
 
 @retry_on_failure(max_retries=3)
 def safe_send_message(chat_id, text, **kwargs):
@@ -87,12 +81,10 @@ def safe_send_message(chat_id, text, **kwargs):
         return bot.send_message(chat_id, text, **kwargs)
     except requests.exceptions.ReadTimeout:
         logger.error(f"Timeout при отправке сообщения в {chat_id}")
-        # Пробуем отправить с увеличенным таймаутом
         return bot.send_message(chat_id, text, timeout=30, **kwargs)
     except Exception as e:
         logger.error(f"Ошибка при отправке сообщения: {e}")
         raise
-
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -118,7 +110,6 @@ _Например: Иванов Иван Иванович_
         welcome_text,
         parse_mode='Markdown'
     )
-
 
 @bot.message_handler(func=lambda message: user_data.get(message.from_user.id, {}).get('state') == UserState.WAITING_FIO)
 def get_fio(message):
@@ -156,7 +147,6 @@ def get_fio(message):
         parse_mode='Markdown'
     )
 
-
 @bot.message_handler(
     func=lambda message: user_data.get(message.from_user.id, {}).get('state') == UserState.WAITING_PASSPORT_SERIES)
 def get_passport_series(message):
@@ -182,7 +172,6 @@ def get_passport_series(message):
         "_Например: 345678_",
         parse_mode='Markdown'
     )
-
 
 @bot.message_handler(
     func=lambda message: user_data.get(message.from_user.id, {}).get('state') == UserState.WAITING_PASSPORT_NUMBER)
@@ -210,7 +199,6 @@ def get_passport_number(message):
         parse_mode='Markdown'
     )
 
-
 @bot.message_handler(
     func=lambda message: user_data.get(message.from_user.id, {}).get('state') == UserState.WAITING_PASSPART_ISSUED)
 def get_passport_issued(message):
@@ -236,7 +224,6 @@ def get_passport_issued(message):
         "_Например: 15.03.2010_",
         parse_mode='Markdown'
     )
-
 
 @bot.message_handler(
     func=lambda message: user_data.get(message.from_user.id, {}).get('state') == UserState.WAITING_PASSPORT_DATE)
@@ -270,7 +257,6 @@ def get_passport_date(message):
     user_data[user_id]['state'] = UserState.WAITING_CONFIRMATION
 
     show_confirmation(message.chat.id, user_id)
-
 
 def show_confirmation(chat_id, user_id):
     data = user_data[user_id]
@@ -306,7 +292,6 @@ def show_confirmation(chat_id, user_id):
         parse_mode='Markdown',
         reply_markup=markup
     )
-
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_confirmation(call):
@@ -380,7 +365,6 @@ def handle_confirmation(call):
     except Exception as e:
         logger.error(f"Ошибка при ответе на callback: {e}")
 
-
 @retry_on_failure(max_retries=5, delay=3)
 def send_to_admin(application):
     """Отправка заявки в бот-админ"""
@@ -409,7 +393,7 @@ def send_to_admin(application):
 """
 
     try:
-        # Пытаемся отправить через username бота-админа
+        # Отправляем через username бота-админа
         bot.send_message(
             f"@{ADMIN_BOT_USERNAME}",
             message_text,
@@ -422,7 +406,6 @@ def send_to_admin(application):
         # Сохраняем в файл для ручной отправки
         save_failed_application(application)
         raise
-
 
 def save_failed_application(application):
     """Сохранение заявки, которую не удалось отправить"""
@@ -442,10 +425,9 @@ def save_failed_application(application):
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(apps, f, ensure_ascii=False, indent=2)
 
-        logger.warning(f"Заявка сохранена в failed_applications.json: {application['user_id']}")
+        logger.warning(f"Заявка сохранена в {filename}: {application['user_id']}")
     except Exception as e:
         logger.error(f"Ошибка сохранения неудачной заявки: {e}")
-
 
 def save_application_locally(application):
     """Сохранение заявки в локальный файл"""
@@ -465,7 +447,6 @@ def save_application_locally(application):
         logger.info(f"Заявка сохранена локально: {application['user_id']}")
     except Exception as e:
         logger.error(f"Ошибка сохранения заявки: {e}")
-
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
@@ -490,7 +471,6 @@ def help_command(message):
         parse_mode='Markdown'
     )
 
-
 @bot.message_handler(commands=['cancel'])
 def cancel_command(message):
     user_id = message.from_user.id
@@ -509,7 +489,6 @@ def cancel_command(message):
             "Используйте /start для создания новой",
             parse_mode='Markdown'
         )
-
 
 if __name__ == "__main__":
     logger.info("Бот для сбора заявок запущен...")
